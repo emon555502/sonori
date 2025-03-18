@@ -116,7 +116,6 @@ Sonori needs two types of models to function properly:
 5. Use the buttons on the overlay to:
    - Copy text to clipboard
    - Clear transcript history
-   - Pause/resume recording
    - Exit the application
 
 ## Configuration
