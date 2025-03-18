@@ -23,6 +23,7 @@ Contributions are welcome. There are no guidelines yet. Just check the planned f
 ### Planned
 
 - **Fix keyboard shortcuts**: Currently, the application does not respond to any keyboard shortcuts
+- **Better error handling**: Handle errors gracefully and provide useful error messages
 - **Improve performance**: Lower CPU usage, lower latency, better multi-threaded code
 - **Better UI**: A better UI with a focus on more usability
 - **VSYNC**: Add VSYNC support for optionally reducing rendered frames
