@@ -1,0 +1,19 @@
+# direnv
+.direnv
+.envrc
+
+# rust
+/target
+**/*.rs.bk
+Cargo.lock
+*.pdb
+
+# logs
+*.log
+
+# editor files
+*~
+*.swp
+.vscode/
+.idea/
+*.sublime-*
