@@ -133,7 +133,7 @@ impl TextRenderer {
         // But allow unlimited height for scrolling
         self.buffer.set_size(
             &mut self.font_system,
-            Some(area_width as f32 - (LEFT_MARGIN + RIGHT_MARGIN as f32)),
+            Some(area_width as f32 - (LEFT_MARGIN + RIGHT_MARGIN)),
             None,
         );
 
@@ -162,7 +162,7 @@ impl TextRenderer {
             bounds: TextBounds {
                 left: 0,
                 top: -10000,
-                right: (area_width - RIGHT_MARGIN as u32) as i32,
+                right: area_width as i32,
                 bottom: 10000,
             },
             default_color: text_color,

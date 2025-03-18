@@ -1,3 +1,5 @@
+use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use wgpu::{self, util::DeviceExt};
 use winit::{
@@ -10,6 +12,7 @@ use super::button_texture::ButtonTexture;
 // Button dimensions and positions
 const COPY_BUTTON_SIZE: u32 = 16;
 const RESET_BUTTON_SIZE: u32 = 16;
+const PAUSE_BUTTON_SIZE: u32 = 16;
 const CLOSE_BUTTON_SIZE: u32 = 12;
 const BUTTON_MARGIN: u32 = 8;
 const BUTTON_SPACING: u32 = 8;
@@ -25,6 +28,8 @@ pub enum ButtonType {
     Copy,
     Reset,
     Close,
+    Pause,
+    Play,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,9 +61,16 @@ pub struct ButtonManager {
     copy_button: Button,
     reset_button: Button,
     close_button: Button,
+    pause_button: Button,
     text_area_height: u32,
     active_button: Option<ButtonType>,
     default_texture: Option<ButtonTexture>,
+    recording: Option<Arc<AtomicBool>>,
+    pause_texture: Option<ButtonTexture>,
+    play_texture: Option<ButtonTexture>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::TextureFormat,
 }
 
 impl Button {
@@ -201,6 +213,7 @@ impl Button {
                     ButtonType::Copy => Some("vs_copy"),
                     ButtonType::Reset => Some("vs_reset"),
                     ButtonType::Close => Some("vs_close"),
+                    ButtonType::Pause | ButtonType::Play => Some("vs_copy"),
                 },
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: 8,
@@ -215,6 +228,7 @@ impl Button {
                     ButtonType::Copy => Some("fs_copy"),
                     ButtonType::Reset => Some("fs_reset"),
                     ButtonType::Close => Some("fs_close"),
+                    ButtonType::Pause | ButtonType::Play => Some("fs_copy"),
                 },
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
@@ -477,19 +491,25 @@ impl ButtonManager {
     ) -> Self {
         let text_area_height = super::window::TEXT_AREA_HEIGHT - super::window::GAP;
 
-        // Calculate positions for the copy and reset buttons - centered at bottom
-        let total_buttons_width = COPY_BUTTON_SIZE + RESET_BUTTON_SIZE + BUTTON_SPACING;
+        // Calculate positions for the buttons - centered at bottom
+        let total_buttons_width =
+            COPY_BUTTON_SIZE + RESET_BUTTON_SIZE + PAUSE_BUTTON_SIZE + BUTTON_SPACING * 2;
         let center_x = window_size.width / 2;
         let start_x = center_x - total_buttons_width / 2;
 
         // Position buttons at the bottom of the text area
+        let pause_y_position = text_area_height - PAUSE_BUTTON_SIZE - BUTTON_MARGIN;
         let copy_y_position = text_area_height - COPY_BUTTON_SIZE - BUTTON_MARGIN;
         let reset_y_position = text_area_height - RESET_BUTTON_SIZE - BUTTON_MARGIN;
 
-        // Positions for the buttons
-        let copy_position = (start_x, copy_y_position);
+        // Positions for the buttons - pause button on the left
+        let pause_position = (start_x, pause_y_position);
+        let copy_position = (
+            start_x + PAUSE_BUTTON_SIZE + BUTTON_SPACING,
+            copy_y_position,
+        );
         let reset_position = (
-            start_x + COPY_BUTTON_SIZE + BUTTON_SPACING,
+            start_x + PAUSE_BUTTON_SIZE + COPY_BUTTON_SIZE + BUTTON_SPACING * 2,
             reset_y_position,
         );
 
@@ -500,6 +520,16 @@ impl ButtonManager {
         );
 
         // Create buttons
+        let pause_button = Button::new(
+            device,
+            queue,
+            ButtonType::Pause,
+            pause_position,
+            (PAUSE_BUTTON_SIZE, PAUSE_BUTTON_SIZE),
+            format,
+            None,
+        );
+
         let copy_button = Button::new(
             device,
             queue,
@@ -534,9 +564,16 @@ impl ButtonManager {
             copy_button,
             reset_button,
             close_button,
+            pause_button,
             text_area_height,
             active_button: None,
             default_texture: None,
+            recording: None,
+            pause_texture: None,
+            play_texture: None,
+            device: device.clone(),
+            queue: queue.clone(),
+            config: format,
         }
     }
 
@@ -546,6 +583,8 @@ impl ButtonManager {
         queue: &wgpu::Queue,
         copy_image_bytes: Option<&[u8]>,
         reset_image_bytes: Option<&[u8]>,
+        pause_image_bytes: Option<&[u8]>,
+        play_image_bytes: Option<&[u8]>,
         format: wgpu::TextureFormat,
     ) {
         // Load copy button texture if provided
@@ -590,23 +629,62 @@ impl ButtonManager {
             }
         }
 
-        // Note: Close button doesn't use a texture - it draws an X directly in the shader
+        // Load pause button texture if provided
+        if let Some(image_bytes) = pause_image_bytes {
+            if let Ok(texture) = ButtonTexture::from_bytes(
+                device,
+                queue,
+                image_bytes,
+                Some("Pause Button Texture"),
+                format,
+            ) {
+                self.pause_texture = Some(texture.clone());
+                self.pause_button = Button::new(
+                    device,
+                    queue,
+                    ButtonType::Pause,
+                    self.pause_button.position,
+                    (PAUSE_BUTTON_SIZE, PAUSE_BUTTON_SIZE),
+                    format,
+                    Some(texture),
+                );
+            }
+        }
+
+        // Load play button texture if provided
+        if let Some(image_bytes) = play_image_bytes {
+            if let Ok(texture) = ButtonTexture::from_bytes(
+                device,
+                queue,
+                image_bytes,
+                Some("Play Button Texture"),
+                format,
+            ) {
+                self.play_texture = Some(texture);
+            }
+        }
     }
 
     pub fn resize(&mut self, window_size: PhysicalSize<u32>) {
-        // Calculate positions for the copy and reset buttons - centered at bottom
-        let total_buttons_width = COPY_BUTTON_SIZE + RESET_BUTTON_SIZE + BUTTON_SPACING;
+        // Calculate positions for the buttons - centered at bottom
+        let total_buttons_width =
+            COPY_BUTTON_SIZE + RESET_BUTTON_SIZE + PAUSE_BUTTON_SIZE + BUTTON_SPACING * 2;
         let center_x = window_size.width / 2;
         let start_x = center_x - total_buttons_width / 2;
 
         // Position buttons at the bottom of the text area
+        let pause_y_position = self.text_area_height - PAUSE_BUTTON_SIZE - BUTTON_MARGIN;
         let copy_y_position = self.text_area_height - COPY_BUTTON_SIZE - BUTTON_MARGIN;
         let reset_y_position = self.text_area_height - RESET_BUTTON_SIZE - BUTTON_MARGIN;
 
-        // Update positions
-        self.copy_button.position = (start_x, copy_y_position);
+        // Update positions - pause button on the left
+        self.pause_button.position = (start_x, pause_y_position);
+        self.copy_button.position = (
+            start_x + PAUSE_BUTTON_SIZE + BUTTON_SPACING,
+            copy_y_position,
+        );
         self.reset_button.position = (
-            start_x + COPY_BUTTON_SIZE + BUTTON_SPACING,
+            start_x + PAUSE_BUTTON_SIZE + COPY_BUTTON_SIZE + BUTTON_SPACING * 2,
             reset_y_position,
         );
 
@@ -621,6 +699,7 @@ impl ButtonManager {
         self.copy_button.set_state(ButtonState::Normal);
         self.reset_button.set_state(ButtonState::Normal);
         self.close_button.set_state(ButtonState::Normal);
+        self.pause_button.set_state(ButtonState::Normal);
         self.active_button = None;
     }
 
@@ -636,23 +715,33 @@ impl ButtonManager {
             Some(ButtonType::Reset)
         } else if self.close_button.contains_point(x, y) {
             Some(ButtonType::Close)
+        } else if self.pause_button.contains_point(x, y) {
+            if let Some(recording) = &self.recording {
+                if recording.load(Ordering::Relaxed) {
+                    Some(ButtonType::Pause)
+                } else {
+                    Some(ButtonType::Play)
+                }
+            } else {
+                Some(ButtonType::Pause)
+            }
         } else {
             None
         };
 
         // Only update states if there's an actual change to avoid wiggling
-        // This prevents animation resets when mouse is stationary over a button
         if current_hover != self.active_button {
             // Reset all buttons to normal state first
-            self.copy_button.set_state(ButtonState::Normal);
-            self.reset_button.set_state(ButtonState::Normal);
-            self.close_button.set_state(ButtonState::Normal);
+            self.reset_hover_states();
 
             // Set the newly hovered button to hover state
             match current_hover {
                 Some(ButtonType::Copy) => self.copy_button.set_state(ButtonState::Hover),
                 Some(ButtonType::Reset) => self.reset_button.set_state(ButtonState::Hover),
                 Some(ButtonType::Close) => self.close_button.set_state(ButtonState::Hover),
+                Some(ButtonType::Pause | ButtonType::Play) => {
+                    self.pause_button.set_state(ButtonState::Hover)
+                }
                 None => {}
             }
 
@@ -667,71 +756,81 @@ impl ButtonManager {
         state: ElementState,
         position: PhysicalPosition<f64>,
     ) -> Option<ButtonType> {
-        let x = position.x;
-        let y = position.y;
-
-        // Only handle left mouse button
-        if button != MouseButton::Left {
-            return None;
-        }
-
-        // Determine which button the mouse is over
-        let target_button_type = if self.copy_button.contains_point(x, y) {
-            ButtonType::Copy
-        } else if self.reset_button.contains_point(x, y) {
-            ButtonType::Reset
-        } else if self.close_button.contains_point(x, y) {
-            ButtonType::Close
-        } else {
-            return None;
-        };
+        let mut result = None;
 
         match state {
             ElementState::Pressed => {
-                // Set button state to pressed only if it's different
-                let button_to_change = match target_button_type {
-                    ButtonType::Copy => &mut self.copy_button,
-                    ButtonType::Reset => &mut self.reset_button,
-                    ButtonType::Close => &mut self.close_button,
-                };
-
-                // Only update if state is changing to avoid restarting animation
-                if button_to_change.state != ButtonState::Pressed {
-                    button_to_change.set_state(ButtonState::Pressed);
+                // Check each button to see if it contains the point
+                if self.copy_button.contains_point(position.x, position.y) {
+                    self.copy_button.set_state(ButtonState::Pressed);
+                } else if self.reset_button.contains_point(position.x, position.y) {
+                    self.reset_button.set_state(ButtonState::Pressed);
+                } else if self.close_button.contains_point(position.x, position.y) {
+                    self.close_button.set_state(ButtonState::Pressed);
+                } else if self.pause_button.contains_point(position.x, position.y) {
+                    self.pause_button.set_state(ButtonState::Pressed);
                 }
-
-                // Update active button
-                self.active_button = Some(target_button_type);
-                None
             }
             ElementState::Released => {
-                // Check if we're releasing on the same button that was pressed
-                if Some(target_button_type) == self.active_button {
-                    // Set button state back to hover
-                    let button_to_change = match target_button_type {
-                        ButtonType::Copy => &mut self.copy_button,
-                        ButtonType::Reset => &mut self.reset_button,
-                        ButtonType::Close => &mut self.close_button,
-                    };
-
-                    // Only update if state is changing
-                    if button_to_change.state != ButtonState::Hover {
-                        button_to_change.set_state(ButtonState::Hover);
+                // Check for clicks - only register if the mouse is released on the same button
+                if self.copy_button.contains_point(position.x, position.y)
+                    && matches!(self.copy_button.state, ButtonState::Pressed)
+                {
+                    result = Some(ButtonType::Copy);
+                } else if self.reset_button.contains_point(position.x, position.y)
+                    && matches!(self.reset_button.state, ButtonState::Pressed)
+                {
+                    result = Some(ButtonType::Reset);
+                } else if self.close_button.contains_point(position.x, position.y)
+                    && matches!(self.close_button.state, ButtonState::Pressed)
+                {
+                    result = Some(ButtonType::Close);
+                } else if self.pause_button.contains_point(position.x, position.y)
+                    && matches!(self.pause_button.state, ButtonState::Pressed)
+                {
+                    // Check current recording state to determine button type
+                    if let Some(recording) = &self.recording {
+                        if recording.load(Ordering::Relaxed) {
+                            result = Some(ButtonType::Pause);
+                        } else {
+                            result = Some(ButtonType::Play);
+                        }
                     }
-
-                    // Return the button type to trigger action
-                    Some(target_button_type)
-                } else {
-                    None
                 }
+
+                // Reset all buttons to normal or hover state
+                self.reset_button.set_state(
+                    if self.reset_button.contains_point(position.x, position.y) {
+                        ButtonState::Hover
+                    } else {
+                        ButtonState::Normal
+                    },
+                );
+                self.copy_button.set_state(
+                    if self.copy_button.contains_point(position.x, position.y) {
+                        ButtonState::Hover
+                    } else {
+                        ButtonState::Normal
+                    },
+                );
+                self.close_button.set_state(
+                    if self.close_button.contains_point(position.x, position.y) {
+                        ButtonState::Hover
+                    } else {
+                        ButtonState::Normal
+                    },
+                );
+                self.pause_button.set_state(
+                    if self.pause_button.contains_point(position.x, position.y) {
+                        ButtonState::Hover
+                    } else {
+                        ButtonState::Normal
+                    },
+                );
             }
         }
-    }
 
-    pub fn update_animations(&mut self) {
-        self.copy_button.update_animation();
-        self.reset_button.update_animation();
-        self.close_button.update_animation();
+        result
     }
 
     pub fn render(
@@ -743,6 +842,42 @@ impl ButtonManager {
     ) {
         // Only render buttons when hovering over the transcript
         if is_hovering_transcript {
+            // Get current recording state
+            let is_recording = self
+                .recording
+                .as_ref()
+                .map(|rec| rec.load(Ordering::Relaxed))
+                .unwrap_or(false);
+
+            // Check if recording state has changed and update button type
+            let current_type = if is_recording {
+                ButtonType::Pause
+            } else {
+                ButtonType::Play
+            };
+
+            // Update the button type if needed
+            if self.pause_button.button_type != current_type {
+                // Get the appropriate texture
+                let texture_option = if is_recording {
+                    self.pause_texture.clone()
+                } else {
+                    self.play_texture.clone()
+                };
+
+                if let Some(texture) = texture_option {
+                    // Save current state
+                    let current_state = self.pause_button.state;
+
+                    // Update the texture and button type
+                    self.pause_button.texture = Some(texture);
+                    self.pause_button.button_type = current_type;
+
+                    // Preserve the button state
+                    self.pause_button.set_state(current_state);
+                }
+            }
+
             // Update animations first
             self.update_animations();
 
@@ -750,6 +885,38 @@ impl ButtonManager {
             self.copy_button.render(view, encoder, queue);
             self.reset_button.render(view, encoder, queue);
             self.close_button.render(view, encoder, queue);
+            self.pause_button.render(view, encoder, queue);
+        }
+    }
+
+    pub fn update_animations(&mut self) {
+        self.copy_button.update_animation();
+        self.reset_button.update_animation();
+        self.close_button.update_animation();
+        self.pause_button.update_animation();
+    }
+
+    pub fn set_recording(&mut self, recording: Option<Arc<AtomicBool>>) {
+        self.recording = recording;
+    }
+
+    pub fn update_pause_button_texture(&mut self) {
+        let is_recording = self
+            .recording
+            .as_ref()
+            .map(|rec| rec.load(Ordering::Relaxed))
+            .unwrap_or(false);
+
+        if is_recording {
+            // We're recording, show the pause button
+            if let Some(texture) = &self.pause_texture {
+                self.pause_button.texture = Some(texture.clone());
+            }
+        } else {
+            // We're not recording, show the play button
+            if let Some(texture) = &self.play_texture {
+                self.pause_button.texture = Some(texture.clone());
+            }
         }
     }
 }

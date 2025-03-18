@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-pub const SCROLLBAR_WIDTH: u32 = 8;
+pub const SCROLLBAR_WIDTH: u32 = 6;
 
 pub struct Scrollbar {
     pub vertices: wgpu::Buffer,
@@ -21,11 +21,11 @@ impl Scrollbar {
                 1.0, -1.0, // top-right
                 -1.0, 1.0, // bottom-left
                 1.0, 1.0, // bottom-right
-                // Scrollbar thumb (partial height)
-                -0.8f32, -0.8, // top-left
-                0.8, -0.8, // top-right
-                -0.8, 0.8, // bottom-left
-                0.8, 0.8, // bottom-right
+                // Scrollbar thumb (partial height) - make slimmer with less width
+                -0.7f32, -0.8, // top-left
+                0.7, -0.8, // top-right
+                -0.7, 0.8, // bottom-left
+                0.7, 0.8, // bottom-right
             ]),
             usage: wgpu::BufferUsages::VERTEX,
         });
@@ -121,8 +121,9 @@ impl Scrollbar {
             occlusion_query_set: None,
         });
 
-        // Set viewport for scrollbar track - Fix: Ensure exact height calculation
-        let track_height = text_area_height.saturating_sub(gap) as f32;
+        // Set viewport for scrollbar track - Ensure exact height calculation
+        // Use the full text_area_height value
+        let track_height = (text_area_height - gap) as f32;
         render_pass.set_viewport(
             (window_width - SCROLLBAR_WIDTH) as f32,
             0.0,
@@ -138,16 +139,29 @@ impl Scrollbar {
         render_pass.draw(0..4, 0..1);
 
         // Calculate thumb position and size
-        let visible_ratio = track_height / (track_height + self.max_scroll_offset);
-        let thumb_height = (track_height * visible_ratio).max(20.0);
+        // Ensure the ratio calculation is correct to size the thumb correctly
+        let content_height = track_height + self.max_scroll_offset;
+        let visible_ratio = if content_height > 0.0 {
+            track_height / content_height
+        } else {
+            1.0
+        };
+
+        // Minimum height for the thumb, but make sure it's proportional to content
+        let thumb_height = (track_height * visible_ratio).max(20.0).min(track_height);
+
+        // Calculate scroll progress (0.0 to 1.0)
         let scroll_progress = if self.max_scroll_offset > 0.0 {
             self.scroll_offset / self.max_scroll_offset
         } else {
             0.0
         };
-        let thumb_top = scroll_progress * (track_height - thumb_height);
 
-        // Set viewport for scrollbar thumb - Fix: Use same track_height variable for consistency
+        // Calculate where to place the thumb within the track
+        let available_track = track_height - thumb_height;
+        let thumb_top = scroll_progress * available_track;
+
+        // Set viewport for scrollbar thumb
         render_pass.set_viewport(
             (window_width - SCROLLBAR_WIDTH) as f32,
             thumb_top,
@@ -166,9 +180,9 @@ impl Scrollbar {
         if self.auto_scroll {
             render_pass.set_viewport(
                 (window_width - SCROLLBAR_WIDTH) as f32,
-                track_height - 6.0,
+                track_height - 5.0,
                 SCROLLBAR_WIDTH as f32,
-                6.0,
+                5.0,
                 0.0,
                 1.0,
             );

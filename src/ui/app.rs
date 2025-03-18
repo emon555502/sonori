@@ -1,5 +1,6 @@
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
@@ -35,8 +36,8 @@ pub fn run() {
 
 pub fn run_with_audio_data(
     audio_data: Arc<RwLock<AudioVisualizationData>>,
-    running: Arc<Mutex<bool>>,
-    recording: Arc<Mutex<bool>>,
+    running: Arc<AtomicBool>,
+    recording: Arc<AtomicBool>,
 ) {
     let event_loop = EventLoop::new().unwrap();
     let mut app = WindowApp {
@@ -52,8 +53,8 @@ pub fn run_with_audio_data(
 pub struct WindowApp {
     pub windows: HashMap<WindowId, WindowState>,
     pub audio_data: Option<Arc<RwLock<AudioVisualizationData>>>,
-    pub running: Option<Arc<Mutex<bool>>>,
-    pub recording: Option<Arc<Mutex<bool>>>,
+    pub running: Option<Arc<AtomicBool>>,
+    pub recording: Option<Arc<AtomicBool>>,
 }
 
 impl ApplicationHandler for WindowApp {
@@ -77,15 +78,13 @@ impl ApplicationHandler for WindowApp {
                 window_attributes.with_title("Sonori"),
                 1.0,
                 mode,
+                self.running.clone(),
+                self.recording.clone(),
             );
 
             if let Some(audio_data) = &self.audio_data {
                 window_state.set_audio_data(audio_data.clone());
             }
-
-            // Set the running and recording state references
-            window_state.running = self.running.clone();
-            window_state.recording = self.recording.clone();
 
             let window_id = window_state.window.id();
             self.windows.insert(window_id, window_state);
@@ -101,7 +100,12 @@ impl ApplicationHandler for WindowApp {
         if let Some(window) = self.windows.get_mut(&window_id) {
             match event {
                 WindowEvent::CloseRequested => {
+                    println!("Window close requested");
+                    // First quit to set the running flag to false
                     window.quit();
+
+                    // Just exit the event loop directly
+                    println!("Exiting event loop directly");
                     event_loop.exit();
                 }
                 WindowEvent::SurfaceResized(size) => {
@@ -110,15 +114,12 @@ impl ApplicationHandler for WindowApp {
                 WindowEvent::RedrawRequested => {
                     window.draw(window.config.width);
                 }
-                // Handle mouse wheel events for scrolling
                 WindowEvent::MouseWheel { delta, .. } => {
                     window.handle_scroll(delta);
                 }
-                // Add cursor movement handling for button hover states
                 WindowEvent::PointerMoved { position, .. } => {
                     window.handle_cursor_moved(position);
                 }
-                // Add mouse input handling for button clicks
                 WindowEvent::PointerButton {
                     button,
                     state,
@@ -132,7 +133,7 @@ impl ApplicationHandler for WindowApp {
                         Some(event_loop),
                     );
                 }
-                // Handle keyboard input for app control
+                // Handle keyboard input for app control (does not work)
                 WindowEvent::KeyboardInput {
                     event:
                         KeyEvent {
@@ -145,7 +146,11 @@ impl ApplicationHandler for WindowApp {
                     match key_code {
                         // Exit on Escape key
                         KeyCode::Escape => {
+                            println!("Escape key pressed, initiating shutdown");
                             window.quit();
+
+                            // Just exit the event loop directly - no need for async here
+                            println!("Exiting event loop directly");
                             event_loop.exit();
                         }
                         _ => {}
@@ -162,6 +167,8 @@ fn create_window(
     w: WindowAttributes,
     scale_factor: f64,
     monitor_mode: VideoModeHandle,
+    running: Option<Arc<AtomicBool>>,
+    recording: Option<Arc<AtomicBool>>,
 ) -> WindowState {
     // Use spectrogram size plus text area height and gap
     let fixed_size = PhysicalSize::new(
@@ -193,5 +200,7 @@ fn create_window(
     WindowState::new(
         ev.create_window(w.with_cursor(CursorIcon::Default))
             .unwrap(),
+        running,
+        recording,
     )
 }

@@ -1,4 +1,5 @@
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use wgpu::{self, util::DeviceExt};
@@ -47,12 +48,16 @@ pub struct WindowState {
     pub auto_scroll: bool,
     pub last_transcript_len: usize,
     pub event_handler: EventHandler,
-    pub running: Option<Arc<Mutex<bool>>>,
-    pub recording: Option<Arc<Mutex<bool>>>,
+    pub running: Option<Arc<AtomicBool>>,
+    pub recording: Option<Arc<AtomicBool>>,
 }
 
 impl WindowState {
-    pub fn new(window: Box<dyn Window>) -> Self {
+    pub fn new(
+        window: Box<dyn Window>,
+        running: Option<Arc<AtomicBool>>,
+        recording: Option<Arc<AtomicBool>>,
+    ) -> Self {
         let window: Arc<dyn Window> = Arc::from(window);
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -127,14 +132,21 @@ impl WindowState {
         // Load button icons
         let copy_icon = include_bytes!("../../assets/copy.png");
         let reset_icon = include_bytes!("../../assets/reset.png");
+        let pause_icon = include_bytes!("../../assets/pause.png");
+        let play_icon = include_bytes!("../../assets/play.png");
 
         button_manager.load_textures(
             &device,
             &queue,
             Some(copy_icon),
             Some(reset_icon),
+            Some(pause_icon),
+            Some(play_icon),
             config.format,
         );
+
+        // Set recording state in button manager
+        button_manager.set_recording(recording.clone());
 
         // Create the scrollbar
         let scrollbar = Scrollbar::new(&device, &config);
@@ -155,7 +167,8 @@ impl WindowState {
         );
 
         // Create event handler
-        let event_handler = EventHandler::new();
+        let mut event_handler = EventHandler::new();
+        event_handler.recording = recording.clone();
 
         Self {
             window,
@@ -184,8 +197,8 @@ impl WindowState {
             event_handler,
 
             // Transcriber state references
-            running: None,
-            recording: None,
+            running,
+            recording,
         }
     }
 
@@ -254,6 +267,13 @@ impl WindowState {
         let mut is_speaking: bool = false;
         let empty_samples: Vec<f32> = Vec::new();
 
+        // Check recording state
+        let is_recording = self
+            .recording
+            .as_ref()
+            .map(|rec| rec.load(Ordering::Relaxed))
+            .unwrap_or(false);
+
         // Determine if scrollbar is needed and the actual width to use for text area
         let mut need_scrollbar: bool = false;
         let mut text_area_width: u32;
@@ -275,14 +295,20 @@ impl WindowState {
         if let Some(spectrogram) = &mut self.spectrogram {
             let samples = if let Some(audio_data) = &self.audio_data {
                 let audio_data_lock = audio_data.read();
-                let samples_clone = audio_data_lock.samples.clone();
-                is_speaking = audio_data_lock.is_speaking;
+                let samples_clone = if is_recording {
+                    audio_data_lock.samples.clone() // Only use real samples when recording
+                } else {
+                    empty_samples.clone() // Use empty samples when not recording
+                };
+                is_speaking = is_recording && audio_data_lock.is_speaking; // Only show speaking state when recording
                 let transcript = audio_data_lock.transcript.clone();
                 display_text = self.text_processor.clean_whitespace(&transcript);
                 drop(audio_data_lock);
                 samples_clone
             } else {
-                display_text = "Sonori is ready".to_string();
+                if is_recording {
+                    display_text = "Sonori is ready".to_string();
+                }
                 is_speaking = false;
                 self.max_scroll_offset = 0.0;
                 self.last_transcript_len = 0;
@@ -322,9 +348,11 @@ impl WindowState {
             }
         }
 
-        // Check if transcript has changed
-        let transcript_changed = display_text.len() != self.last_transcript_len;
-        self.last_transcript_len = display_text.len();
+        // Check if transcript has changed - only when recording
+        let transcript_changed = is_recording && display_text.len() != self.last_transcript_len;
+        if is_recording {
+            self.last_transcript_len = display_text.len();
+        }
 
         // Calculate text layout using the text processor
         let layout_info = self.text_processor.calculate_layout(
@@ -384,12 +412,18 @@ impl WindowState {
                 &view,
                 &mut encoder,
                 self.config.width,
-                TEXT_AREA_HEIGHT,
+                text_area_height,
                 GAP,
             );
         }
 
         // Render the buttons after the text - only when hovering over transcript
+        // First make sure the pause/play button texture is up-to-date
+        if self.event_handler.hovering_transcript {
+            // Update button texture based on recording state
+            self.button_manager.update_pause_button_texture();
+        }
+
         (&mut self.button_manager).render(
             &view,
             &mut encoder,
@@ -421,11 +455,16 @@ impl WindowState {
             .calculate_text_area_width(self.max_scroll_offset > 0.0);
         let text_area_height = self.layout_manager.get_text_area_height();
 
+        // Get window size
+        let window_size = self.window.outer_size();
+
         // Update event handler and button states
         self.event_handler.handle_cursor_moved(
             position,
             text_area_width,
             text_area_height,
+            window_size.width,
+            window_size.height,
             &mut self.button_manager,
         );
 
@@ -471,10 +510,23 @@ impl WindowState {
     }
 
     pub fn toggle_recording(&mut self) {
-        EventHandler::toggle_recording(&self.recording);
+        if let Some(recording) = &self.recording {
+            // Toggle recording state
+            let was_recording = recording.load(Ordering::Relaxed);
+            let new_state = !was_recording;
+            recording.store(new_state, Ordering::Relaxed);
+            println!("Recording toggled to: {}", new_state);
+
+            // Update button texture after toggling recording state
+            self.button_manager.update_pause_button_texture();
+        } else {
+            println!("Error: recording state is None");
+        }
     }
 
     pub fn quit(&mut self) {
-        EventHandler::quit(&self.running);
+        if let Some(running) = &self.running {
+            running.store(false, Ordering::Relaxed);
+        }
     }
 }

@@ -1,5 +1,6 @@
 use ct2rs::{Whisper, WhisperOptions};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
@@ -14,7 +15,7 @@ pub struct TranscriptionProcessor {
     whisper: Arc<Mutex<Option<Whisper>>>,
     language: String,
     options: WhisperOptions,
-    running: Arc<Mutex<bool>>,
+    running: Arc<AtomicBool>,
     transcription_done_tx: mpsc::UnboundedSender<()>,
     transcription_stats: Arc<Mutex<TranscriptionStats>>,
 }
@@ -24,7 +25,7 @@ impl TranscriptionProcessor {
         whisper: Arc<Mutex<Option<Whisper>>>,
         language: String,
         options: WhisperOptions,
-        running: Arc<Mutex<bool>>,
+        running: Arc<AtomicBool>,
         transcription_done_tx: mpsc::UnboundedSender<()>,
         transcription_stats: Arc<Mutex<TranscriptionStats>>,
     ) -> Self {
@@ -57,8 +58,10 @@ impl TranscriptionProcessor {
         tokio::spawn(async move {
             println!("Transcription task started");
 
+            // When recording is false, no segments are received from AudioProcessor,
+            // so this task naturally idles until recording is resumed
             'outer: loop {
-                if !*running.lock() && segment_rx.is_empty() {
+                if !running.load(Ordering::Relaxed) && segment_rx.is_empty() {
                     break 'outer;
                 }
 
@@ -84,7 +87,7 @@ impl TranscriptionProcessor {
                         tokio::task::spawn_blocking(move || {
                             let transcription = transcribe_with_whisper(
                                 &whisper_clone,
-                                &segment, // Pass segment by reference, no need to clone
+                                &segment,
                                 &language_clone,
                                 &options_clone,
                                 &stats_clone,

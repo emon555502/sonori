@@ -3,6 +3,7 @@ use chrono;
 use parking_lot::Mutex;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,14 +15,14 @@ const STATS_INTERVAL_SECS: u64 = 10;
 /// Handles reporting of transcription statistics
 pub struct StatsReporter {
     transcription_stats: Arc<Mutex<TranscriptionStats>>,
-    running: Arc<Mutex<bool>>,
+    running: Arc<AtomicBool>,
 }
 
 impl StatsReporter {
     /// Creates a new StatsReporter
     pub fn new(
         transcription_stats: Arc<Mutex<TranscriptionStats>>,
-        running: Arc<Mutex<bool>>,
+        running: Arc<AtomicBool>,
     ) -> Self {
         Self {
             transcription_stats,
@@ -60,7 +61,7 @@ impl StatsReporter {
         // Spawn an async task to periodically report transcription statistics
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(STATS_INTERVAL_SECS));
-            while *running.lock() {
+            while running.load(Ordering::Relaxed) {
                 interval.tick().await;
                 if let Some(stats) = transcription_stats.try_lock() {
                     if stats.segments_processed > 0 {

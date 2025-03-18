@@ -2,6 +2,7 @@ use anyhow::Context;
 use ct2rs::{ComputeType, Config, Device, Whisper, WhisperOptions};
 use parking_lot::{Mutex, RwLock};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
@@ -30,8 +31,8 @@ pub struct RealTimeTranscriber {
     pub transcript_rx: broadcast::Receiver<String>,
 
     // State control
-    running: Arc<Mutex<bool>>,
-    recording: Arc<Mutex<bool>>,
+    running: Arc<AtomicBool>,
+    recording: Arc<AtomicBool>,
 
     // Model and parameters
     whisper: Arc<Mutex<Option<Whisper>>>,
@@ -94,8 +95,8 @@ impl RealTimeTranscriber {
         println!("Using Silero VAD model at: {:?}", silero_model_path);
         println!("Using Whisper model at: {:?}", model_path);
 
-        let running = Arc::new(Mutex::new(true));
-        let recording = Arc::new(Mutex::new(false));
+        let running = Arc::new(AtomicBool::new(true));
+        let recording = Arc::new(AtomicBool::new(false));
         let transcript_history = Arc::new(RwLock::new(String::new()));
         let whisper = Arc::new(Mutex::new(None));
         let transcription_stats = Arc::new(Mutex::new(TranscriptionStats::new()));
@@ -185,14 +186,18 @@ impl RealTimeTranscriber {
     /// # Returns
     /// Result indicating success or an error with detailed message
     pub fn start(&mut self) -> Result<(), anyhow::Error> {
+        // Ensure recording is initially set to false
+        self.recording.store(false, Ordering::Relaxed);
+
+        // Set running to true
+        self.running.store(true, Ordering::Relaxed);
+
         // Start audio capture
         self.audio_capture.start(
             self.tx.clone(),
             self.running.clone(),
             self.recording.clone(),
         )?;
-
-        *self.running.lock() = true;
 
         // Initialize statistics reporter
         let stats_reporter =
@@ -250,8 +255,43 @@ impl RealTimeTranscriber {
     /// # Returns
     /// Result indicating success or an error with detailed message
     pub async fn stop(&mut self) -> Result<(), anyhow::Error> {
-        *self.running.lock() = false;
-        *self.recording.lock() = false;
+        self.recording.store(false, Ordering::Relaxed);
+
+        // We don't set running to false because we want to be able to resume
+
+        // Pause the audio stream without closing it
+        if let Err(e) = self.audio_capture.pause() {
+            eprintln!("Warning: Failed to pause audio capture: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Resumes audio processing after it has been stopped
+    ///
+    /// # Returns
+    /// Result indicating success or error
+    pub async fn resume(&mut self) -> Result<(), anyhow::Error> {
+        // Resume the audio stream
+        if let Err(e) = self.audio_capture.resume() {
+            return Err(anyhow::anyhow!("Failed to resume audio capture: {}", e));
+        }
+
+        // Set recording back to true if it was previously recording
+        self.recording.store(true, Ordering::Relaxed);
+
+        Ok(())
+    }
+
+    /// Completely shuts down the audio capture and transcription process
+    ///
+    /// Terminates all audio processing and releases resources
+    ///
+    /// # Returns
+    /// Result indicating success or an error with detailed message
+    pub async fn shutdown(&mut self) -> Result<(), anyhow::Error> {
+        self.running.store(false, Ordering::Relaxed);
+        self.recording.store(false, Ordering::Relaxed);
 
         // Create a timeout for waiting on the transcription thread
         if let Some(rx) = &mut self.transcription_done_rx {
@@ -261,6 +301,7 @@ impl RealTimeTranscriber {
             }
         }
 
+        // Completely stop and clean up the audio capture
         self.audio_capture.stop();
 
         Ok(())
@@ -270,8 +311,29 @@ impl RealTimeTranscriber {
     ///
     /// When active, audio is captured and processed for transcription
     pub fn toggle_recording(&mut self) {
-        let mut recording = self.recording.lock();
-        *recording = !*recording;
+        let was_recording = self.recording.load(Ordering::Relaxed);
+        self.recording.store(!was_recording, Ordering::Relaxed);
+
+        // Toggle the audio stream based on the new recording state
+        if was_recording {
+            // We were recording, now stopping - pause the stream
+            if let Err(e) = self.audio_capture.pause() {
+                // It's okay if the stream is not started - that's an expected edge case
+                if !e.to_string().contains("StreamIsNotStarted") {
+                    eprintln!("Warning: Failed to pause audio stream: {}", e);
+                }
+            }
+        } else {
+            // We were stopped, now recording - resume the stream
+            if let Err(e) = self.audio_capture.resume() {
+                // It's okay if the stream is not stopped - that's an expected edge case
+                if !e.to_string().contains("StreamIsNotStopped") {
+                    eprintln!("Warning: Failed to resume audio stream: {}", e);
+                }
+            }
+        }
+
+        println!("Recording toggled to: {}", !was_recording);
     }
 
     /// Returns the current transcript history
@@ -311,12 +373,12 @@ impl RealTimeTranscriber {
     }
 
     /// Get the running state reference
-    pub fn get_running(&self) -> Arc<Mutex<bool>> {
+    pub fn get_running(&self) -> Arc<AtomicBool> {
         self.running.clone()
     }
 
     /// Get the recording state reference
-    pub fn get_recording(&self) -> Arc<Mutex<bool>> {
+    pub fn get_recording(&self) -> Arc<AtomicBool> {
         self.recording.clone()
     }
 
@@ -333,8 +395,9 @@ impl RealTimeTranscriber {
 
 impl Drop for RealTimeTranscriber {
     fn drop(&mut self) {
-        *self.running.lock() = false;
-        *self.recording.lock() = false;
+        // We need to manually do the cleanup since we can't use the async shutdown method
+        self.running.store(false, Ordering::Relaxed);
+        self.recording.store(false, Ordering::Relaxed);
 
         // Wait for transcription to finish with a timeout
         if let Some(mut rx) = self.transcription_done_rx.take() {
@@ -357,6 +420,7 @@ impl Drop for RealTimeTranscriber {
             }
         }
 
+        // Completely stop the audio capture
         self.audio_capture.stop();
         *self.whisper.lock() = None;
         println!("Cleaned up RealTimeTranscriber resources");

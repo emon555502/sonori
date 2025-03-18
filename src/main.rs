@@ -1,6 +1,5 @@
-use std::io::Write;
-use std::time::Duration;
-use tokio::sync::broadcast;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 mod audio_capture;
 mod audio_processor;
@@ -32,19 +31,48 @@ async fn main() -> anyhow::Result<()> {
     println!("Whisper model ready at: {:?}", whisper_model_path);
 
     let mut transcriber = RealTimeTranscriber::new(whisper_model_path, app_config.clone())?;
-    println!("Starting transcription automatically...");
 
     transcriber.start()?;
 
+    println!("Starting transcription automatically...");
     transcriber.toggle_recording();
 
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(2);
-    let shutdown_tx_clone = shutdown_tx.clone();
-
+    // Set up shutdown channels and monitoring task
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(2);
     let transcript_history = transcriber.get_transcript_history();
     let mut transcript_rx = transcriber.get_transcript_rx();
     let audio_visualization_data = transcriber.get_audio_visualization_data();
     let audio_visualization_data_for_thread = audio_visualization_data.clone();
+    let running_for_shutdown = transcriber.get_running().clone();
+
+    // Single unified shutdown task that handles all shutdown paths
+    tokio::spawn(async move {
+        let mut shutdown_rx = shutdown_rx;
+
+        let mut check_interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
+
+        loop {
+            tokio::select! {
+                Some(_) = shutdown_rx.recv() => {
+                    println!("Shutdown signal received, starting graceful shutdown...");
+                    break;
+                }
+
+                _ = check_interval.tick() => {
+                    let is_running = running_for_shutdown.load(Ordering::Relaxed);
+
+                    if !is_running {
+                        println!("Running flag is now false, starting graceful shutdown...");
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Just exit the process - the main thread will handle transcriber shutdown
+        println!("Shutdown signal processed, exiting process");
+        std::process::exit(0);
+    });
 
     tokio::spawn(async move {
         while let Ok(transcription) = transcript_rx.recv().await {
@@ -64,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
     let running = transcriber.get_running();
     let recording = transcriber.get_recording();
 
+    // Run the UI with AtomicBool values directly
     ui::run_with_audio_data(audio_visualization_data, running, recording);
 
     Ok(())

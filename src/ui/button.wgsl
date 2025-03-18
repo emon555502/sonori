@@ -36,6 +36,16 @@ fn vs_reset(@location(0) position: vec2<f32>) -> VertexOutput {
     return out;
 }
 
+// Vertex shader for pause button
+@vertex
+fn vs_pause(@location(0) position: vec2<f32>) -> VertexOutput {
+    var out: VertexOutput;
+    out.position = vec4<f32>(position, 0.0, 1.0);
+    // Map from [-1, 1] to [0, 1] for texture coordinates
+    out.tex_coords = vec2<f32>(position.x * 0.5 + 0.5, -position.y * 0.5 + 0.5);
+    return out;
+}
+
 // Vertex shader for close button - with rotation support
 @vertex
 fn vs_close(@location(0) position: vec2<f32>) -> VertexOutput {
@@ -69,9 +79,18 @@ fn fs_copy(in: VertexOutput) -> @location(0) vec4<f32> {
     return color;
 }
 
-// Fragment shader for reset button - uses texture with red tint
+// Fragment shader for reset button - uses texture
 @fragment
 fn fs_reset(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Sample the texture
+    var color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    
+    return color;
+}
+
+// Fragment shader for pause button - uses texture
+@fragment
+fn fs_pause(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the texture
     var color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
     

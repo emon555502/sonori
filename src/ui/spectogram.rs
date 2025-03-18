@@ -296,87 +296,116 @@ impl Spectrogram {
     /// This is a key performance-critical function that converts audio samples
     /// into spectrogram bar heights.
     pub fn update(&mut self, audio_samples: &[f32]) {
-        // Check if we're receiving audio (speaking) by summing absolute values
-        let audio_energy = if !audio_samples.is_empty() {
-            // Only sample a subset of values for energy calculation
-            let sample_step = (audio_samples.len() / 20).max(1);
-            let mut sum = 0.0;
-            let mut count = 0;
-
-            for i in (0..audio_samples.len()).step_by(sample_step) {
-                sum += audio_samples[i].abs();
-                count += 1;
-            }
-
-            if count > 0 {
-                sum / count as f32
-            } else {
-                0.0
-            }
-        } else {
-            0.0
-        };
-
-        self.is_speaking = audio_energy > SPEAKING_THRESHOLD;
-
         let num_bars = self.bar_data.len();
 
-        if !self.is_speaking && audio_samples.is_empty() {
-            // If no audio, animate with the existing target values (will decay to minimum)
+        if audio_samples.is_empty() {
+            self.is_speaking = false;
             self.animate_bars();
             return;
         }
 
+        let audio_energy = {
+            let sample_step = (audio_samples.len() / 20).max(1);
+            let mut sum = 0.0;
+            let count = (audio_samples.len() + sample_step - 1) / sample_step; // Ceiling division
+
+            for i in (0..audio_samples.len()).step_by(sample_step) {
+                sum += audio_samples[i].abs();
+            }
+
+            sum / count as f32
+        };
+
+        self.is_speaking = audio_energy > SPEAKING_THRESHOLD;
+
+        if !self.is_speaking && audio_samples.is_empty() {
+            self.animate_bars();
+            return;
+        }
+
+        // Pre-allocate a working buffer for smoothing to avoid allocation in hot path
+        let mut smoothed_data = std::mem::take(&mut self.target_bar_data);
+        smoothed_data.resize(num_bars, 0.0);
+
         // Process audio samples to calculate bar heights
         if audio_samples.len() < num_bars {
+            // Optimize for fewer samples than bars
             let step = audio_samples.len().max(1) / num_bars.max(1);
 
             for i in 0..num_bars {
                 let idx = (i * step).min(audio_samples.len().saturating_sub(1));
-                let sample = audio_samples.get(idx).copied().unwrap_or(0.0).abs();
+                let sample = if idx < audio_samples.len() {
+                    audio_samples[idx].abs()
+                } else {
+                    0.0
+                };
 
-                // Apply a non-linear scaling (capped at MAX_BAR_HEIGHT) to make
-                // the visualization more responsive to quieter sounds
-                let capped_sample = (sample * SAMPLE_AMPLIFICATION).min(MAX_BAR_HEIGHT);
-                self.target_bar_data[i] = capped_sample;
+                // Apply a non-linear scaling (capped at MAX_BAR_HEIGHT)
+                smoothed_data[i] = (sample * SAMPLE_AMPLIFICATION).min(MAX_BAR_HEIGHT);
             }
         } else {
-            // We have more audio samples than bars, so average groups of samples
+            // Optimize for more samples than bars
             let samples_per_bar = audio_samples.len() / num_bars;
 
             for i in 0..num_bars {
                 let start_idx = i * samples_per_bar;
                 let end_idx = ((i + 1) * samples_per_bar).min(audio_samples.len());
-
-                // Calculate the root mean square (RMS) of the audio segment
-                // then apply a square root to get a more perceptually balanced amplitude
                 let segment_len = end_idx - start_idx;
+
                 if segment_len > 0 {
-                    let mut sum = 0.0;
-                    for j in start_idx..end_idx {
-                        sum += audio_samples[j].abs();
-                    }
+                    // Use iterator for better optimization potential
+                    let sum: f32 = audio_samples[start_idx..end_idx]
+                        .iter()
+                        .map(|&x| x.abs())
+                        .sum();
 
                     let avg = sum / segment_len as f32;
 
-                    // Apply non-linear scaling for better visual dynamics
-                    let scaled = avg.sqrt() * SCALED_AMPLIFICATION;
-                    self.target_bar_data[i] = scaled.min(MAX_BAR_HEIGHT);
+                    // Apply non-linear scaling
+                    smoothed_data[i] = (avg.sqrt() * SCALED_AMPLIFICATION).min(MAX_BAR_HEIGHT);
                 } else {
-                    self.target_bar_data[i] = MIN_AMPLITUDE;
+                    smoothed_data[i] = MIN_AMPLITUDE;
                 }
             }
         }
 
-        // Apply smoothing to prevent jagged appearance
-        // This is a simple 3-point moving average filter
-        // with weights that must sum to 1.0 to maintain average amplitude
-        let original = self.target_bar_data.clone();
-        for i in 1..num_bars - 1 {
-            self.target_bar_data[i] = (original[i - 1] * PREV_BAR_WEIGHT
-                + original[i] * CURRENT_BAR_WEIGHT
-                + original[i + 1] * NEXT_BAR_WEIGHT);
+        // Apply smoothing without cloning the entire array
+        // Handle edge cases separately
+        if num_bars > 2 {
+            // Apply filter to first element
+            let first = smoothed_data[0] * CURRENT_BAR_WEIGHT + smoothed_data[1] * NEXT_BAR_WEIGHT;
+
+            // Apply filter to last element
+            let last = smoothed_data[num_bars - 2] * PREV_BAR_WEIGHT
+                + smoothed_data[num_bars - 1] * CURRENT_BAR_WEIGHT;
+
+            // Save temporary values for each bar to avoid allocation
+            let mut prev_val = smoothed_data[0];
+            let mut curr_val = smoothed_data[1];
+
+            // Apply in-place smoothing for middle elements
+            for i in 1..num_bars - 1 {
+                let next_val = if i + 1 < num_bars {
+                    smoothed_data[i + 1]
+                } else {
+                    0.0
+                };
+                let smoothed = prev_val * PREV_BAR_WEIGHT
+                    + curr_val * CURRENT_BAR_WEIGHT
+                    + next_val * NEXT_BAR_WEIGHT;
+
+                prev_val = curr_val;
+                curr_val = next_val;
+                smoothed_data[i] = smoothed;
+            }
+
+            // Set edge values
+            smoothed_data[0] = first;
+            smoothed_data[num_bars - 1] = last;
         }
+
+        // Swap back the buffer
+        self.target_bar_data = smoothed_data;
 
         self.animate_bars();
     }
@@ -399,33 +428,39 @@ impl Spectrogram {
         } else {
             // When silent: gentle decay toward minimum
             (
-                ANIMATION_SPEED * 1.5,
+                ANIMATION_SPEED * 2.0,
                 ANIMATION_SPEED * 3.0,
-                ANIMATION_SPEED * 0.75,
+                ANIMATION_SPEED * 0.5,
             )
         };
 
+        // Pre-compute common factors to avoid redundant calculations
+        let rise_factor = rise_speed * capped_dt;
+        let fall_factor = fall_speed * capped_dt;
+        let decay_factor = 1.0 - (idle_decay * capped_dt);
+
         // Update all bars in a single pass
-        for i in 0..self.bar_data.len() {
-            let diff = self.target_bar_data[i] - self.bar_data[i];
+        for (i, bar) in self.bar_data.iter_mut().enumerate() {
+            let target = self.target_bar_data[i];
+            let diff = target - *bar;
 
             if self.is_speaking {
                 // When speaking, use asymmetric animation speeds for rise/fall
-                let speed = if diff > 0.0 { rise_speed } else { fall_speed };
-                self.bar_data[i] += diff * speed * capped_dt;
+                let speed_factor = if diff > 0.0 { rise_factor } else { fall_factor };
+                *bar += diff * speed_factor;
             } else {
                 // When silent, animate toward minimum with gentle decay
                 if diff.abs() > MIN_DIFF_THRESHOLD {
-                    self.bar_data[i] += diff * fall_speed * capped_dt;
+                    *bar += diff * fall_factor;
                 } else {
                     // Apply exponential decay
-                    self.bar_data[i] *= 1.0 - (idle_decay * capped_dt);
-                    self.bar_data[i] = self.bar_data[i].max(MIN_AMPLITUDE);
+                    *bar *= decay_factor;
+                    *bar = (*bar).max(MIN_AMPLITUDE);
                 }
             }
 
-            // Keep values in valid range using pre-computed constants
-            self.bar_data[i] = self.bar_data[i].clamp(MIN_AMPLITUDE, MAX_AMPLITUDE);
+            // Keep values in valid range
+            *bar = (*bar).clamp(MIN_AMPLITUDE, MAX_AMPLITUDE);
         }
 
         self.update_instance_buffer();

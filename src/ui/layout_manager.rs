@@ -43,9 +43,10 @@ impl LayoutManager {
     /// Calculate the text area width, considering scrollbar if needed
     pub fn calculate_text_area_width(&self, need_scrollbar: bool) -> u32 {
         if need_scrollbar {
-            self.window_width.saturating_sub(SCROLLBAR_WIDTH + 2) // Leave 2 pixels margin for visual clarity
+            self.window_width.saturating_sub(SCROLLBAR_WIDTH + 1) // Reduced margin for slimmer scrollbar
         } else {
-            self.window_width.saturating_sub(self.right_margin as u32)
+            // Use the full window width when no scrollbar is needed (minus margins on both sides)
+            self.window_width
         }
     }
 

@@ -484,9 +484,9 @@ impl SileroVad {
             self.process_frame(&frame)?;
         }
 
-        // Only process partial frames if they are at least 1/3 of a frame
+        // Only process partial frames if they are at least 1/4 of a frame
         // This reduces CPU impact while still capturing significant speech
-        let partial_threshold = frame_size / 3;
+        let partial_threshold = frame_size / 4;
 
         if !self.buffer.is_empty() && self.buffer.len() >= partial_threshold {
             frame.clear();

@@ -1,6 +1,7 @@
 use anyhow;
 use parking_lot::Mutex;
 use portaudio as pa;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -21,16 +22,16 @@ impl AudioCapture {
     ///
     /// # Arguments
     /// * `tx` - Channel sender for audio samples
-    /// * `running` - Shared running state
-    /// * `recording` - Shared recording state
+    /// * `running` - Atomic flag indicating whether the app is running
+    /// * `recording` - Atomic flag indicating whether recording is active
     ///
     /// # Returns
     /// Result indicating success or error
     pub fn start(
         &mut self,
         tx: mpsc::Sender<Vec<f32>>,
-        running: Arc<Mutex<bool>>,
-        recording: Arc<Mutex<bool>>,
+        running: Arc<AtomicBool>,
+        recording: Arc<AtomicBool>,
     ) -> Result<(), anyhow::Error> {
         let config = read_app_config();
 
@@ -46,14 +47,28 @@ impl AudioCapture {
             config.buffer_size as u32,
         );
 
+        let running_clone = running.clone();
+        let recording_clone = recording.clone();
+        tokio::spawn(async move {
+            while running_clone.load(Ordering::Relaxed) {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                if !running_clone.load(Ordering::Relaxed)
+                    || !recording_clone.load(Ordering::Relaxed)
+                {
+                    // Signal that we should stop monitoring
+                    break;
+                }
+            }
+        });
+
         let callback = move |pa::InputStreamCallbackArgs { buffer, .. }| {
-            if *recording.lock() {
+            if recording.load(Ordering::Relaxed) {
                 let samples = buffer.to_vec();
                 if let Err(e) = tx.try_send(samples) {
                     eprintln!("Failed to send samples: {}", e);
                 }
             }
-            if *running.lock() {
+            if running.load(Ordering::Relaxed) {
                 pa::Continue
             } else {
                 pa::Complete
@@ -63,6 +78,7 @@ impl AudioCapture {
         let mut stream = pa
             .open_non_blocking_stream(input_settings, callback)
             .map_err(|e| anyhow::anyhow!("Failed to open stream: {}", e))?;
+
         stream
             .start()
             .map_err(|e| anyhow::anyhow!("Failed to start stream: {}", e))?;
@@ -71,7 +87,45 @@ impl AudioCapture {
         Ok(())
     }
 
-    /// Stops audio capture
+    /// Temporarily pauses audio capture without closing the stream
+    /// This allows for resuming the stream later
+    ///
+    /// # Returns
+    /// Result indicating success or error
+    pub fn pause(&mut self) -> Result<(), anyhow::Error> {
+        if let Some(stream) = &mut self.pa_stream {
+            match stream.stop() {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    eprintln!("Failed to pause stream: {}", e);
+                    Err(anyhow::anyhow!("Failed to pause stream: {}", e))
+                }
+            }
+        } else {
+            Ok(()) // No stream to pause
+        }
+    }
+
+    /// Resumes a previously paused audio capture stream
+    ///
+    /// # Returns
+    /// Result indicating success or error
+    pub fn resume(&mut self) -> Result<(), anyhow::Error> {
+        if let Some(stream) = &mut self.pa_stream {
+            match stream.start() {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    eprintln!("Failed to resume stream: {}", e);
+                    Err(anyhow::anyhow!("Failed to resume stream: {}", e))
+                }
+            }
+        } else {
+            Err(anyhow::anyhow!("No stream to resume"))
+        }
+    }
+
+    /// Completely stops and cleans up the audio capture
+    /// This closes the stream and releases resources
     pub fn stop(&mut self) {
         if let Some(stream) = &mut self.pa_stream {
             if let Err(e) = stream.stop() {
