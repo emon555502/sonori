@@ -55,13 +55,14 @@
             pkgs.rust-analyzer-unwrapped
             pkgs.wtype
             pkgs.onnxruntime
+            pkgs.vulkan-loader
             toolchain
           ];
           packages = [ ];
 
           # Environment variables
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
-          LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.libxkbcommon pkgs.libxkbcommon.dev pkgs.wayland pkgs.wayland.dev pkgs.xorg.libX11 pkgs.xorg.libX11.dev pkgs.xorg.libXcursor pkgs.xorg.libXi pkgs.xorg.libXrandr pkgs.libiconv pkgs.openssl.dev ];
+          LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.libxkbcommon pkgs.libxkbcommon.dev pkgs.wayland pkgs.wayland.dev pkgs.xorg.libX11 pkgs.xorg.libX11.dev pkgs.xorg.libXcursor pkgs.xorg.libXi pkgs.xorg.libXrandr pkgs.libiconv pkgs.openssl.dev pkgs.vulkan-loader ];
           OPENSSL_STATIC = "0";
           OPENSSL_DIR = pkgs.openssl.dev;
           OPENSSL_INCLUDE_DIR = (
