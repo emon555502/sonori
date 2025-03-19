@@ -15,6 +15,7 @@ Contributions are welcome. There are no guidelines yet. Just check the planned f
 - **Transparent Overlay**: Non-intrusive overlay that sits at the bottom of your screen
 - **Audio Visualization**: Visual feedback when speaking with a spectrogram display
 - **Copy/Paste Functionality**: Easily copy transcribed text to clipboard
+- **Pause/Resume Recording**: Pause/Resume recording
 - **Auto-Start Recording**: Begins recording as soon as the application launches
 - **Scroll Controls**: Navigate through longer transcripts
 - **Configurable**: Configure the model, language, and other settings in the config file (config.json)
@@ -47,7 +48,7 @@ For Debian/Ubuntu-based distributions:
 ```bash
 sudo apt install build-essential portaudio19-dev libclang-dev pkg-config wl-copy \
   libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-  libasound2-dev libssl-dev libfftw3-dev curl cmake
+  libasound2-dev libssl-dev libfftw3-dev curl cmake libvulkan-dev
 ```
 
 For Fedora/RHEL-based distributions:
@@ -55,14 +56,15 @@ For Fedora/RHEL-based distributions:
 ```bash
 sudo dnf install gcc gcc-c++ portaudio-devel clang-devel pkg-config wl-copy \
   libxkbcommon-devel wayland-devel libX11-devel libXcursor-devel libXi-devel libXrandr-devel \
-  alsa-lib-devel openssl-devel fftw-devel curl cmake
+  alsa-lib-devel openssl-devel fftw-devel curl cmake vulkan-loader-devel
 ```
 
 For Arch-based distributions:
 
 ```bash
 sudo pacman -S base-devel portaudio clang pkgconf wl-copy \
-  libxkbcommon wayland libx11 libxcursor libxi libxrandr alsa-lib openssl fftw curl cmake
+  libxkbcommon wayland libx11 libxcursor libxi libxrandr alsa-lib openssl fftw curl cmake \
+  vulkan-headers vulkan-tools
 ```
 
 For NixOS:
@@ -73,7 +75,7 @@ Simply use the provided flake.nix by running
 nix develop
 ```
 
-while in the root directory of the repository
+while in the root directory of the repository. The flake includes all necessary dependencies including vulkan-loader.
 
 ### Required Models
 
@@ -92,6 +94,7 @@ Sonori needs two types of models to function properly:
 
 - **ONNX Runtime**: Required for the Silero VAD model.
 - **CTranslate2**: Used for Whisper model inference.
+- **Vulkan**: Required for WGPU rendering. Your system must have a working Vulkan installation.
 
 ## Installation
 
@@ -115,6 +118,7 @@ Sonori needs two types of models to function properly:
 3. Recording starts automatically
 4. Speak naturally - your speech will be transcribed in real-time or near real-time (based on the model and hardware)
 5. Use the buttons on the overlay to:
+   - Pause/Resume recording
    - Copy text to clipboard
    - Clear transcript history
    - Exit the application
@@ -177,6 +181,15 @@ For non-English languages, use the multilingual models (without `.en` suffix) an
 Sonori uses layer shell protocol for Wayland compositors. If you experience issues:
 
 - Make sure you are in a wayland session and your compositor supports the layer shell protocol
+
+### Vulkan Support
+
+Sonori uses WGPU for rendering, which requires Vulkan support. If you encounter errors related to adapter detection or Vulkan:
+
+- Ensure you have the Vulkan libraries installed for your distribution (see Dependencies section)
+- Verify that your GPU supports Vulkan and that drivers are properly installed
+- On some systems, you may need to install additional vendor-specific Vulkan packages (e.g., `mesa-vulkan-drivers` on Ubuntu/Debian)
+- You can test Vulkan support by running `vulkaninfo` or `vkcube` if available on your system
 
 ### Model Conversion Issues
 
