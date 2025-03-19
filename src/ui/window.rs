@@ -1,4 +1,5 @@
 use parking_lot::Mutex;
+use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -65,14 +66,23 @@ impl WindowState {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window.clone()).unwrap();
+        let surface = match instance.create_surface(window.clone()) {
+            Ok(surface) => surface,
+            Err(e) => {
+                eprintln!("Failed to create surface: {:?}", e.source());
+                panic!("Surface creation failed");
+            }
+        };
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
-        .unwrap();
+        .unwrap_or_else(|| {
+            eprintln!("Failed to find a suitable GPU adapter");
+            panic!("No suitable GPU adapter found");
+        });
 
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
