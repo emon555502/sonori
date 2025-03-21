@@ -18,12 +18,11 @@ Contributions are welcome. There are no guidelines yet. Just check the planned f
 - **Pause/Resume Recording**: Pause/Resume recording
 - **Auto-Start Recording**: Begins recording as soon as the application launches
 - **Scroll Controls**: Navigate through longer transcripts
-- **Configurable**: Configure the model, language, and other settings in the config file (config.json)
+- **Configurable**: Configure the model, language, and other settings like keyboard shortcuts in the config file (config.json)
 - **Automatic Model Download**: Both Whisper and Silero VAD models are downloaded automatically
 
 ### Planned
 
-- **Fix keyboard shortcuts**: Currently, the application does not respond to any keyboard shortcuts
 - **Better error handling**: Handle errors gracefully and provide useful error messages
 - **Improve performance**: Lower CPU usage, lower latency, better multi-threaded code
 - **Better UI**: A better UI with a focus on more usability
@@ -151,9 +150,34 @@ Example configuration:
   },
   "audio_processor_config": {
     "max_vis_samples": 1024
+  },
+  "keyboard_shortcuts": {
+    "copy_transcript": "KeyC",
+    "reset_transcript": "KeyR",
+    "quit_application": "KeyQ",
+    "toggle_recording": "Space",
+    "exit_application": "Escape"
   }
 }
 ```
+
+### Keyboard Shortcuts
+
+You can customize the keyboard shortcuts used in the application by editing the `keyboard_shortcuts` section in the config.json file. The default shortcuts are:
+
+- `copy_transcript`: KeyC (Ctrl+C) - Copy the transcription to clipboard
+- `reset_transcript`: KeyR (Ctrl+R) - Clear the current transcript
+- `toggle_recording`: Space - Toggle recording on/off
+- `exit_application`: Escape - Exit the application
+
+When specifying keys, use the key names from the [KeyCode enum in winit](https://docs.rs/winit/latest/winit/keyboard/enum.KeyCode.html), such as:
+
+- Letter keys: KeyA, KeyB, KeyC, etc.
+- Number keys: Digit0, Digit1, etc.
+- Function keys: F1, F2, etc.
+- Special keys: Space, Escape, Enter, Tab, etc.
+
+Note: The Ctrl modifier is automatically applied to copy_transcript, reset_transcript shortcuts.
 
 ### Model Options
 

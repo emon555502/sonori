@@ -20,12 +20,12 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
-    pub fn new() -> Self {
+    pub fn new(recording: Option<Arc<AtomicBool>>) -> Self {
         Self {
             cursor_position: None,
             hovering_transcript: false,
             auto_scroll: true,
-            recording: None,
+            recording,
         }
     }
 
@@ -72,16 +72,22 @@ impl EventHandler {
         // Store the current cursor position
         self.cursor_position = Some(position);
 
-        // Check if cursor is within the text area bounds
+        // Check if cursor is within the window bounds first
+        let is_in_window = position.x >= 0.0
+            && position.x <= window_width as f64
+            && position.y >= 0.0
+            && position.y <= window_height as f64;
+
+        // Then check if cursor is within the text area bounds
         let is_in_text_area = position.x >= 0.0
             && position.x <= text_area_width as f64
             && position.y >= 0.0
             && position.y <= text_area_height as f64;
 
         // Update hovering state - must be both in window and in text area
-        self.hovering_transcript = is_in_text_area;
+        self.hovering_transcript = is_in_window && is_in_text_area;
 
-        // Only update button states when cursor is both in window and in text area
+        // Only update button states when cursor is hovering over the transcript
         if self.hovering_transcript {
             button_manager.handle_mouse_move(position);
         } else {
@@ -188,5 +194,13 @@ impl EventHandler {
             }
         }
         false
+    }
+
+    pub fn handle_cursor_leave(&mut self, button_manager: &mut super::buttons::ButtonManager) {
+        // When cursor leaves the window, ensure hovering_transcript is false
+        self.hovering_transcript = false;
+
+        // Reset all button states
+        button_manager.reset_hover_states();
     }
 }

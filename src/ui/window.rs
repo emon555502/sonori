@@ -177,8 +177,7 @@ impl WindowState {
         );
 
         // Create event handler
-        let mut event_handler = EventHandler::new();
-        event_handler.recording = recording.clone();
+        let event_handler = EventHandler::new(recording.clone());
 
         Self {
             window,
@@ -432,14 +431,10 @@ impl WindowState {
         if self.event_handler.hovering_transcript {
             // Update button texture based on recording state
             self.button_manager.update_pause_button_texture();
-        }
 
-        (&mut self.button_manager).render(
-            &view,
-            &mut encoder,
-            self.event_handler.hovering_transcript,
-            &self.queue,
-        );
+            // Only render buttons when hovering over transcript area
+            (&mut self.button_manager).render(&view, &mut encoder, true, &self.queue);
+        }
 
         // Submit all rendering commands
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -478,6 +473,13 @@ impl WindowState {
             &mut self.button_manager,
         );
 
+        self.window.request_redraw();
+    }
+
+    pub fn handle_cursor_leave(&mut self) {
+        // Explicitly handle cursor leaving the window
+        self.event_handler
+            .handle_cursor_leave(&mut self.button_manager);
         self.window.request_redraw();
     }
 

@@ -92,8 +92,8 @@ async fn main() -> anyhow::Result<()> {
     let running = transcriber.get_running();
     let recording = transcriber.get_recording();
 
-    // Run the UI with AtomicBool values directly
-    ui::run_with_audio_data(audio_visualization_data, running, recording);
+    // Run the UI with AtomicBool values directly and pass the configuration
+    ui::run_with_audio_data(audio_visualization_data, running, recording, app_config);
 
     Ok(())
 }
